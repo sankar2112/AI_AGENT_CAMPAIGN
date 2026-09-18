@@ -20,6 +20,7 @@ from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
 from ..config import get_settings
+from .compliance import CHANNEL_LIMITS
 
 logger = logging.getLogger(__name__)
 
@@ -106,16 +107,57 @@ class BedrockNovaClient:
         text = "".join(block.get("text", "") for block in response["output"]["message"]["content"])
         usage = response.get("usage", {})
         payload = _parse_json(text)
+        body = str(payload.get("body", text)).strip()
+        input_tokens = int(usage.get("inputTokens", 0))
+        output_tokens = int(usage.get("outputTokens", 0))
+
+        channel = str((context or {}).get("channel", ""))
+        limit = CHANNEL_LIMITS.get(channel)
+        if limit and len(body) > limit:
+            body, extra_in, extra_out = self._shorten(body, channel, limit, model)
+            input_tokens += extra_in
+            output_tokens += extra_out
+
         return Generation(
             subject=str(payload.get("subject", ""))[:200],
-            body=str(payload.get("body", text)).strip(),
+            body=body,
             next_best_action=str(payload.get("next_best_action", ""))[:200],
             propensity=_clamp(payload.get("propensity", 0.5)),
             latency_ms=int((time.perf_counter() - started) * 1000),
-            input_tokens=int(usage.get("inputTokens", 0)),
-            output_tokens=int(usage.get("outputTokens", 0)),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             provider="bedrock",
         )
+
+    def _shorten(self, body: str, channel: str, limit: int, model: str) -> tuple[str, int, int]:
+        """Ask Nova once to fit the channel limit, then hard-trim if it still overflows."""
+        try:
+            response = self.client.converse(
+                modelId=model,
+                system=[{"text": SYSTEM_PROMPT}],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "text": f"Rewrite this {channel} copy in at most {limit} characters, "
+                                f"keeping the offer, the call to action and the same hard rules. "
+                                f"Reply with JSON only.\n\n{body}"
+                            }
+                        ],
+                    }
+                ],
+                inferenceConfig={"maxTokens": self.settings.bedrock_max_tokens, "temperature": 0.2},
+            )
+            text = "".join(b.get("text", "") for b in response["output"]["message"]["content"])
+            usage = response.get("usage", {})
+            retried = str(_parse_json(text).get("body", text)).strip()
+            if 0 < len(retried) <= limit:
+                return retried, int(usage.get("inputTokens", 0)), int(usage.get("outputTokens", 0))
+            body = retried or body
+        except (ClientError, BotoCoreError, KeyError, ValueError) as exc:  # pragma: no cover - network path
+            logger.warning("shortening pass failed: %s", exc)
+        return _trim(body, limit), 0, 0
 
     def review_compliance(self, body: str, model_id: str | None = None) -> dict[str, Any]:
         """Optional LLM-as-reviewer pass; rule engine remains the source of truth."""
@@ -138,6 +180,17 @@ class BedrockNovaClient:
         except (ClientError, BotoCoreError, KeyError, ValueError) as exc:  # pragma: no cover - network path
             logger.warning("compliance review failed: %s", exc)
             return {"verdict": "skipped", "notes": str(exc)}
+
+
+def _trim(body: str, limit: int) -> str:
+    if len(body) <= limit:
+        return body
+    clipped = body[:limit]
+    for boundary in (". ", "! ", "? ", " "):
+        cut = clipped.rfind(boundary)
+        if cut > limit * 0.6:
+            return clipped[: cut + (1 if boundary != " " else 0)].strip()
+    return clipped.strip()
 
 
 def _clamp(value: Any) -> float:

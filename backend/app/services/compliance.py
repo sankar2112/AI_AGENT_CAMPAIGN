@@ -32,7 +32,15 @@ PII_PATTERNS: list[tuple[str, str]] = [
     (r"\bcredit score\s*(is|of)?\s*\d{3}\b", "Credit score disclosed"),
 ]
 
-DISCLAIMER_HINTS = ("t&c", "terms and conditions", "subject to", "risk", "disclaimer")
+DISCLAIMER_HINTS = (
+    "t&c",
+    "terms and conditions",
+    "terms apply",
+    "terms & conditions",
+    "subject to",
+    "risk",
+    "disclaimer",
+)
 
 
 @dataclass
