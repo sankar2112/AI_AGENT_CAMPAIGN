@@ -31,7 +31,13 @@ Hard rules:
 - Never state an interest rate, fee or eligibility figure that is not present in the offer details.
 - Always keep the customer's data confidential: no account numbers, no credit scores, no income figures in the copy.
 - Include a short risk/T&C disclaimer suited to the product.
-- Respect the channel limits: sms <= 320 characters, whatsapp <= 600 characters, push <= 140 characters, email <= 200 words.
+- Respect the channel format and limits:
+  - email: subject line plus <= 200 words, greeting and sign-off.
+  - sms: <= 320 characters, plain text, no links unless given in the offer details.
+  - whatsapp: <= 600 characters, short paragraphs, conversational.
+  - push: <= 140 characters, one sentence, no disclaimer needed.
+  - social: <= 400 characters of ad/post copy, no direct personal data, broad appeal with a hook.
+  - print: <= 1200 characters of branch leaflet or letter copy, formal register, printable layout with a headline then body.
 
 Reply with JSON only, matching exactly:
 {"subject": str, "body": str, "next_best_action": str, "propensity": float between 0 and 1}"""
@@ -184,6 +190,19 @@ def _mock_generation(ctx: dict[str, Any]) -> Generation:
         body = f"{name}, {product} is ready for you. {cta}."[:140]
     elif channel == "whatsapp":
         body = f"{opener}\n\n{product}: {offer or 'personalised terms based on your relationship with us.'}\n{cta}\n{disclaimer}"[:600]
+    elif channel == "social":
+        body = (
+            f"{product} — built for {ctx.get('segment', 'our')} customers who want more from their money. "
+            f"{offer or 'Personalised terms, decided with you.'} {cta}. {disclaimer}"
+        )[:400]
+    elif channel == "print":
+        body = (
+            f"{product.upper()}\n\n"
+            f"Dear {name},\n\n"
+            f"{offer or 'We have reviewed your relationship with us and prepared personalised terms for you.'}\n\n"
+            f"Visit your nearest branch or {cta.lower()} to speak with a relationship manager.\n\n"
+            f"{disclaimer}"
+        )[:1200]
     else:
         body = (
             f"{opener}\n\nBased on your current portfolio we think {product} fits your goals. "
@@ -191,7 +210,7 @@ def _mock_generation(ctx: dict[str, Any]) -> Generation:
             f"and a relationship manager will call you back.\n\n{disclaimer}"
         )
     return Generation(
-        subject=f"{name}, a personalised {product} option for you" if channel == "email" else "",
+        subject=f"{name}, a personalised {product} option for you" if channel in {"email", "print"} else "",
         body=body,
         next_best_action=rng.choice(
             [

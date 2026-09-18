@@ -5,7 +5,16 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-CHANNEL_LIMITS = {"sms": 320, "whatsapp": 600, "push": 140, "email": 2000}
+CHANNEL_LIMITS = {
+    "sms": 320,
+    "whatsapp": 600,
+    "push": 140,
+    "email": 2000,
+    "social": 400,
+    "print": 1200,
+}
+
+DISCLAIMER_REQUIRED_CHANNELS = {"email", "whatsapp", "social", "print"}
 
 BANNED_PATTERNS: list[tuple[str, str]] = [
     (r"\bguarantee(d|s)?\b", "Guarantee language is not permitted for financial products"),
@@ -59,7 +68,7 @@ def check(body: str, channel: str, offer_details: str = "") -> ComplianceResult:
     if unsupported:
         issues.append(f"Unsupported rate claim: {', '.join(sorted(unsupported))}")
 
-    if channel in {"email", "whatsapp"} and not any(hint in lowered for hint in DISCLAIMER_HINTS):
+    if channel in DISCLAIMER_REQUIRED_CHANNELS and not any(hint in lowered for hint in DISCLAIMER_HINTS):
         warnings.append("Missing risk/T&C disclaimer")
     if not text.strip():
         issues.append("Empty message body")

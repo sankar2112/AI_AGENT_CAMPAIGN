@@ -1,4 +1,4 @@
-export type Channel = 'email' | 'sms' | 'whatsapp' | 'push'
+export type Channel = 'email' | 'sms' | 'whatsapp' | 'push' | 'social' | 'print'
 
 export interface AudienceFilter {
   segments: string[]

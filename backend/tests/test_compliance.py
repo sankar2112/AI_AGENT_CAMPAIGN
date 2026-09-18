@@ -31,6 +31,16 @@ def test_missing_disclaimer_warns():
     assert result.status == "warn"
 
 
+def test_social_post_length_limit():
+    result = compliance.check("a" * 500, "social")
+    assert result.status == "fail"
+
+
+def test_print_leaflet_within_limit_passes():
+    body = "HOME LOAN\n\nDear Meera,\n\nVisit your nearest branch to know more.\n\nT&C apply."
+    assert compliance.check(body, "print").status == "pass"
+
+
 def test_pan_in_body_is_blocked():
     result = compliance.check("Your PAN ABCDE1234F is on file. T&C apply.", "email")
     assert result.status == "fail"
