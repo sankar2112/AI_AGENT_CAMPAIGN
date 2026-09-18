@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-Channel = Literal["email", "sms", "whatsapp", "push"]
+Channel = Literal["email", "sms", "whatsapp", "push", "social", "print"]
 
 
 class CustomerBase(BaseModel):

@@ -20,6 +20,7 @@ from botocore.config import Config
 from botocore.exceptions import BotoCoreError, ClientError, NoCredentialsError
 
 from ..config import get_settings
+from .compliance import CHANNEL_LIMITS
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,13 @@ Hard rules:
 - Never state an interest rate, fee or eligibility figure that is not present in the offer details.
 - Always keep the customer's data confidential: no account numbers, no credit scores, no income figures in the copy.
 - Include a short risk/T&C disclaimer suited to the product.
-- Respect the channel limits: sms <= 320 characters, whatsapp <= 600 characters, push <= 140 characters, email <= 200 words.
+- Respect the channel format and limits:
+  - email: subject line plus <= 200 words, greeting and sign-off.
+  - sms: <= 320 characters, plain text, no links unless given in the offer details.
+  - whatsapp: <= 600 characters, short paragraphs, conversational.
+  - push: <= 140 characters, one sentence, no disclaimer needed.
+  - social: <= 400 characters of ad/post copy, no direct personal data, broad appeal with a hook.
+  - print: <= 1200 characters of branch leaflet or letter copy, formal register, printable layout with a headline then body.
 
 Reply with JSON only, matching exactly:
 {"subject": str, "body": str, "next_best_action": str, "propensity": float between 0 and 1}"""
@@ -100,16 +107,57 @@ class BedrockNovaClient:
         text = "".join(block.get("text", "") for block in response["output"]["message"]["content"])
         usage = response.get("usage", {})
         payload = _parse_json(text)
+        body = str(payload.get("body", text)).strip()
+        input_tokens = int(usage.get("inputTokens", 0))
+        output_tokens = int(usage.get("outputTokens", 0))
+
+        channel = str((context or {}).get("channel", ""))
+        limit = CHANNEL_LIMITS.get(channel)
+        if limit and len(body) > limit:
+            body, extra_in, extra_out = self._shorten(body, channel, limit, model)
+            input_tokens += extra_in
+            output_tokens += extra_out
+
         return Generation(
             subject=str(payload.get("subject", ""))[:200],
-            body=str(payload.get("body", text)).strip(),
+            body=body,
             next_best_action=str(payload.get("next_best_action", ""))[:200],
             propensity=_clamp(payload.get("propensity", 0.5)),
             latency_ms=int((time.perf_counter() - started) * 1000),
-            input_tokens=int(usage.get("inputTokens", 0)),
-            output_tokens=int(usage.get("outputTokens", 0)),
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
             provider="bedrock",
         )
+
+    def _shorten(self, body: str, channel: str, limit: int, model: str) -> tuple[str, int, int]:
+        """Ask Nova once to fit the channel limit, then hard-trim if it still overflows."""
+        try:
+            response = self.client.converse(
+                modelId=model,
+                system=[{"text": SYSTEM_PROMPT}],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "text": f"Rewrite this {channel} copy in at most {limit} characters, "
+                                f"keeping the offer, the call to action and the same hard rules. "
+                                f"Reply with JSON only.\n\n{body}"
+                            }
+                        ],
+                    }
+                ],
+                inferenceConfig={"maxTokens": self.settings.bedrock_max_tokens, "temperature": 0.2},
+            )
+            text = "".join(b.get("text", "") for b in response["output"]["message"]["content"])
+            usage = response.get("usage", {})
+            retried = str(_parse_json(text).get("body", text)).strip()
+            if 0 < len(retried) <= limit:
+                return retried, int(usage.get("inputTokens", 0)), int(usage.get("outputTokens", 0))
+            body = retried or body
+        except (ClientError, BotoCoreError, KeyError, ValueError) as exc:  # pragma: no cover - network path
+            logger.warning("shortening pass failed: %s", exc)
+        return _trim(body, limit), 0, 0
 
     def review_compliance(self, body: str, model_id: str | None = None) -> dict[str, Any]:
         """Optional LLM-as-reviewer pass; rule engine remains the source of truth."""
@@ -132,6 +180,17 @@ class BedrockNovaClient:
         except (ClientError, BotoCoreError, KeyError, ValueError) as exc:  # pragma: no cover - network path
             logger.warning("compliance review failed: %s", exc)
             return {"verdict": "skipped", "notes": str(exc)}
+
+
+def _trim(body: str, limit: int) -> str:
+    if len(body) <= limit:
+        return body
+    clipped = body[:limit]
+    for boundary in (". ", "! ", "? ", " "):
+        cut = clipped.rfind(boundary)
+        if cut > limit * 0.6:
+            return clipped[: cut + (1 if boundary != " " else 0)].strip()
+    return clipped.strip()
 
 
 def _clamp(value: Any) -> float:
@@ -184,6 +243,19 @@ def _mock_generation(ctx: dict[str, Any]) -> Generation:
         body = f"{name}, {product} is ready for you. {cta}."[:140]
     elif channel == "whatsapp":
         body = f"{opener}\n\n{product}: {offer or 'personalised terms based on your relationship with us.'}\n{cta}\n{disclaimer}"[:600]
+    elif channel == "social":
+        body = (
+            f"{product} — built for {ctx.get('segment', 'our')} customers who want more from their money. "
+            f"{offer or 'Personalised terms, decided with you.'} {cta}. {disclaimer}"
+        )[:400]
+    elif channel == "print":
+        body = (
+            f"{product.upper()}\n\n"
+            f"Dear {name},\n\n"
+            f"{offer or 'We have reviewed your relationship with us and prepared personalised terms for you.'}\n\n"
+            f"Visit your nearest branch or {cta.lower()} to speak with a relationship manager.\n\n"
+            f"{disclaimer}"
+        )[:1200]
     else:
         body = (
             f"{opener}\n\nBased on your current portfolio we think {product} fits your goals. "
@@ -191,7 +263,7 @@ def _mock_generation(ctx: dict[str, Any]) -> Generation:
             f"and a relationship manager will call you back.\n\n{disclaimer}"
         )
     return Generation(
-        subject=f"{name}, a personalised {product} option for you" if channel == "email" else "",
+        subject=f"{name}, a personalised {product} option for you" if channel in {"email", "print"} else "",
         body=body,
         next_best_action=rng.choice(
             [

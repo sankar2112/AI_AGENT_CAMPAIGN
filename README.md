@@ -6,6 +6,7 @@ End-to-end, real-time campaign platform for banking, financial services and insu
 - **Amazon Bedrock Nova** (`amazon.nova-lite-v1:0` by default, via the Bedrock `converse` API) for per-customer copy generation and propensity scoring
 - **PostgreSQL** (SQLAlchemy 2.0) for customers, campaigns, runs and generated messages
 - **React + TypeScript (Vite)** console with a live WebSocket feed of every message as the agent produces it
+- **Six channels**: WhatsApp, Email, SMS, Push notification, Social media, Print/Branch — each with its own prompt format rules and enforced length limit
 - **BFSI compliance guardrails** applied deterministically to every message before "delivery" (no guaranteed-return claims, no unsupported rates, no PII leakage, channel length limits, mandatory disclaimers)
 
 ## Architecture

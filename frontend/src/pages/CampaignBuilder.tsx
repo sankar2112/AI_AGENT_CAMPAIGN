@@ -117,10 +117,12 @@ export default function CampaignBuilder() {
             <label>
               Channel
               <select value={form.channel} onChange={(e) => setForm({ ...form, channel: e.target.value as Channel })}>
+                <option value="whatsapp">WhatsApp</option>
                 <option value="email">Email</option>
                 <option value="sms">SMS</option>
-                <option value="whatsapp">WhatsApp</option>
-                <option value="push">Push</option>
+                <option value="push">Push notification</option>
+                <option value="social">Social media</option>
+                <option value="print">Print / branch</option>
               </select>
             </label>
             <label>
